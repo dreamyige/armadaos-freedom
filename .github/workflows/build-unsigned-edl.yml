@@ -49,6 +49,12 @@ jobs:
             [ -e "$d/loop/backing_file" ] || echo "free: $d"
           done | head -5
 
+      - name: Enable x86_64 emulation (binfmt)
+        # lepton 包用 amd64 的 ubuntu:22.04 构建镜像，需要 qemu-user 跑 RUN
+        run: |
+          docker run --privileged --rm tonistiigi/binfmt --install amd64
+          ls /proc/sys/fs/binfmt_misc/ | head
+
       - name: Install build tools
         run: |
           # runner 已预装 podman/buildah/skopeo/docker/git/jq/python3
