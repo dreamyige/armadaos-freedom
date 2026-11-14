@@ -106,29 +106,25 @@ jobs:
           PY
 
       - name: Patch mesa-x86 pacman sandbox (qemu)
-        # pacman 7 的 seccomp 沙箱在 qemu-user 下不可用（error 22），
-        # 加 --disable-sandbox（旧版 pacman 自动跳过该 flag）。
+        # pacman 7 的 seccomp 沙箱在 qemu-user 下不可用（error 22）。
+        # pacman.conf 的 [options] 段支持 DisableSandbox，插入它。
         run: |
           f=packages/mesa-x86/build.sh
           python3 - "$f" <<'PY'
           import sys, pathlib
           p = pathlib.Path(sys.argv[1])
           s = p.read_text()
-          if "PACMAN_FLAGS" not in s:
-              s = s.replace(
-                  "pacman -Syyuu",
-                  'PACMAN_FLAGS=""\n'
-                  'if pacman --help 2>&1 | grep -q -- --disable-sandbox; then PACMAN_FLAGS="--disable-sandbox"; fi\n'
-                  'pacman $PACMAN_FLAGS -Syyuu',
-                  1,
+          if "DisableSandbox" not in s:
+              inject = (
+                  "awk '{print} /^\\[options\\]/{print \"DisableSandbox\"}' /etc/pacman.conf > /tmp/pc.conf && mv /tmp/pc.conf /etc/pacman.conf\n"
               )
-              s = s.replace("pacman -S --noconfirm", "pacman $PACMAN_FLAGS -S --noconfirm", 1)
+              s = s.replace("pacman -Syyuu", inject + "pacman -Syyuu", 1)
               p.write_text(s)
               print("patched mesa-x86 build.sh")
           else:
               print("already patched")
           PY
-          grep -n "PACMAN_FLAGS" "$f" | head -5
+          grep -n "DisableSandbox" "$f" | head -3
 
       - name: Build single package (quick check)
         if: inputs.only_package != ''
