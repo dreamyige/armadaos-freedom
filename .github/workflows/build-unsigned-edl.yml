@@ -80,13 +80,9 @@ jobs:
           inject = (
               "# CI fix: define __u128 for host tools\n"
               "printf 'typedef signed __int128 __s128;\\ntypedef unsigned __int128 __u128;\\n' > /tmp/armada-u128.h\n"
-              "for mk in tools/lib/subcmd/Makefile tools/lib/bpf/Makefile tools/bpf/resolve_btfids/Makefile; do\n"
-              "    if [ -f \"$mk\" ]; then\n"
-              "        printf '\\nCFLAGS += -include /tmp/armada-u128.h\\n' >> \"$mk\"\n"
-              "        printf 'HOSTCFLAGS += -include /tmp/armada-u128.h\\n' >> \"$mk\"\n"
-              "    fi\n"
+              "find tools -name Makefile -print0 | while IFS= read -r -d '' mk; do\n"
+              "    printf '\\nCFLAGS += -include /tmp/armada-u128.h\\nHOSTCFLAGS += -include /tmp/armada-u128.h\\n' >> \"$mk\"\n"
               "done\n"
-              "MAKE_ARGS+=(HOSTCC=\"gcc -include /tmp/armada-u128.h\")\n"
               "\n"
           )
           if "CI fix: define __u128" not in s:
