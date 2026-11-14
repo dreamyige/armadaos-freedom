@@ -19,6 +19,11 @@ on:
         type: choice
         options: ["32", "48"]
         default: "32"
+      only_package:
+        description: "只构建单个包（快速验证，留空=全量）"
+        type: string
+        required: false
+        default: ""
 
 jobs:
   build:
@@ -100,21 +105,55 @@ jobs:
               print("already patched")
           PY
 
+      - name: Patch mesa-x86 pacman sandbox (qemu)
+        # pacman 7 的 seccomp 沙箱在 qemu-user 下不可用（error 22），
+        # 加 --disable-sandbox（旧版 pacman 自动跳过该 flag）。
+        run: |
+          f=packages/mesa-x86/build.sh
+          python3 - "$f" <<'PY'
+          import sys, pathlib
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text()
+          if "PACMAN_FLAGS" not in s:
+              s = s.replace(
+                  "pacman -Syyuu",
+                  'PACMAN_FLAGS=""\n'
+                  'if pacman --help 2>&1 | grep -q -- --disable-sandbox; then PACMAN_FLAGS="--disable-sandbox"; fi\n'
+                  'pacman $PACMAN_FLAGS -Syyuu',
+                  1,
+              )
+              s = s.replace("pacman -S --noconfirm", "pacman $PACMAN_FLAGS -S --noconfirm", 1)
+              p.write_text(s)
+              print("patched mesa-x86 build.sh")
+          else:
+              print("already patched")
+          PY
+          grep -n "PACMAN_FLAGS" "$f" | head -5
+
+      - name: Build single package (quick check)
+        if: inputs.only_package != ''
+        run: |
+          just package "${{ inputs.only_package }}"
+
       - name: Build all packages locally
+        if: inputs.only_package == ''
         # 关键：先把所有包本地构建出来，避免解析到作者的私有 registry
         run: |
           just packages
 
       - name: Build arm64 image
+        if: inputs.only_package == ''
         run: |
           just build localhost/armada latest
 
       - name: Show image info
+        if: inputs.only_package == ''
         run: |
           podman images
           skopeo inspect containers-storage:localhost/armada:latest | head -40
 
       - name: Build EDL package (unsigned)
+        if: inputs.only_package == ''
         env:
           EDL_PACKAGE_PROFILE: ${{ inputs.profile }}
         run: |
@@ -124,10 +163,12 @@ jobs:
             localhost/armada latest
 
       - name: List output
+        if: inputs.only_package == ''
         run: |
           find output/edl -type f -printf '%p  %s bytes\n' | head -50
 
       - name: Upload package
+        if: inputs.only_package == ''
         uses: actions/upload-artifact@v4
         with:
           name: edl-package-unsigned
