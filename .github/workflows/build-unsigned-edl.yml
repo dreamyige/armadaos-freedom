@@ -1,0 +1,99 @@
+name: Build unsigned EDL package (TB322FC)
+
+# 自建 EDL 包：不依赖作者的私有包仓库与签名私钥。
+# 全部 packages 从源码本地构建（构建镜像用公开的 Fedora），
+# 镜像本机构建，最后用 build-edl-package.sh 产出未签名包。
+#
+# 运行环境：ubuntu-24.04-arm（公开仓库 Actions 免费，原生 arm64，避免 QEMU）
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "release = TB322FC+TB323FU；install = 全机型安装包"
+        type: choice
+        options: [release, install]
+        default: release
+      root_image_gib:
+        description: "root 镜像大小 (32 或 48 GiB)"
+        type: choice
+        options: ["32", "48"]
+        default: "32"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Free disk space
+        # 镜像 6.5GB + 包 + 构建层，runner 默认空间不够
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
+      - name: Prepare loop devices
+        # build-edl-package.sh 需要两个空闲 /dev/loopN
+        run: |
+          sudo modprobe loop max_loop=64 || true
+          sudo losetup -D || true
+          ls /dev/loop* | head
+          for d in /sys/block/loop*; do
+            [ -e "$d/loop/backing_file" ] || echo "free: $d"
+          done | head -5
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            just podman buildah skopeo docker.io uuid-runtime \
+            python3 python3-venv git jq
+          # 确认 docker 守护进程可用（build-edl-package.sh 用 docker，不是 podman）
+          sudo systemctl start docker || true
+          docker info >/dev/null
+          podman info >/dev/null
+          echo "just: $(just --version)"
+          echo "podman: $(podman --version)"
+          echo "docker: $(docker --version)"
+
+      - name: Build all packages locally
+        # 关键：先把所有包本地构建出来，避免解析到作者的私有 registry
+        run: |
+          just packages
+
+      - name: Build arm64 image
+        run: |
+          just build localhost/armada latest
+
+      - name: Show image info
+        run: |
+          podman images
+          skopeo inspect containers-storage:localhost/armada:latest | head -40
+
+      - name: Build EDL package (unsigned)
+        env:
+          EDL_PACKAGE_PROFILE: ${{ inputs.profile }}
+        run: |
+          # origin 只影响系统内记录的更新源，这里指向作者的 testing 频道
+          just build-edl-package-local \
+            "ostree-image-signed:docker://ghcr.io/armadaos-freedom/armadaos-freedom:testing" \
+            localhost/armada latest
+
+      - name: List output
+        run: |
+          find output/edl -type f -printf '%p  %s bytes\n' | head -50
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: edl-package-unsigned
+          path: output/edl/**
+          if-no-files-found: error
+          compression-level: 0
