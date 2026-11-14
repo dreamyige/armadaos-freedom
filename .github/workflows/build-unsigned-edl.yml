@@ -126,7 +126,7 @@ jobs:
           PY
           grep -n "DisableSandbox" "$f" | head -3
 
-      - name: Speed: skip mesa-x86 variants (CI time budget)
+      - name: "Speed: skip mesa-x86 variants (CI time budget)"
         # 默认 + devel + winnative 各编 x86_64/i686 = 6 次 QEMU 编译，约 2.5h，
         # 会顶穿 6h job 上限。CI 先只编默认变体（约 50 分钟），
         # 系统仍可启动，devel/winnative 之后可补。
