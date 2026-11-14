@@ -67,18 +67,34 @@ jobs:
           podman info >/dev/null && echo "podman OK" || echo "podman rootless failed"
           echo "podman: $(podman --version)"
 
-      - name: Disable kernel BTF (__u128 host-tool workaround)
-        # Fedora 容器的 kernel-headers 在 asm/sigcontext.h 用 __u128，
-        # resolve_btfids 的 libsubcmd/pager.c 编译失败。
-        # 关掉 BTF 后内核不再构建该 host 工具；不影响启动。
+      - name: Patch kernel host tools (__u128)
+        # Fedora kernel-headers 的 asm/sigcontext.h 引用 __u128，
+        # 而 tools/lib/{subcmd,bpf} 的 pager.c 等没先引入定义它的头。
+        # 直接注入一个定义文件，强制加到这些子模块的 CFLAGS。
         run: |
-          f=packages/kernel/config/armada-kernel.config.overrides
-          if grep -q '^# CONFIG_DEBUG_INFO_BTF is not set' "$f"; then
-            echo "already disabled"
-          else
-            printf '\n# CI: avoid resolve_btfids host-tool build (__u128 vs Fedora headers)\n# CONFIG_DEBUG_INFO_BTF is not set\n# CONFIG_DEBUG_INFO_BTF_MODULES is not set\n' >> "$f"
-          fi
-          tail -5 "$f"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("packages/kernel/scripts/build-kernel.sh")
+          s = p.read_text()
+          marker = "# ---------- 2. Apply patches ----------"
+          inject = r'''# CI fix: define __u128 for host tools against newer kernel-headers
+cat > /tmp/armada-u128.h <<'EOF'
+typedef signed __int128 __s128;
+typedef unsigned __int128 __u128;
+EOF
+for mk in tools/lib/subcmd/Makefile tools/lib/bpf/Makefile tools/bpf/resolve_btfids/Makefile; do
+    [ -f "$mk" ] && printf '\nCFLAGS += -include /tmp/armada-u128.h\n' >> "$mk"
+done
+
+'''
+          if "CI fix: define __u128" not in s:
+              assert marker in s, "marker not found"
+              s = s.replace(marker, inject + marker, 1)
+              p.write_text(s)
+              print("patched build-kernel.sh")
+          else:
+              print("already patched")
+          PY
 
       - name: Build all packages locally
         # 关键：先把所有包本地构建出来，避免解析到作者的私有 registry
