@@ -69,24 +69,22 @@ jobs:
 
       - name: Patch kernel host tools (__u128)
         # Fedora kernel-headers 的 asm/sigcontext.h 引用 __u128，
-        # 而 tools/lib/{subcmd,bpf} 的 pager.c 等没先引入定义它的头。
-        # 直接注入一个定义文件，强制加到这些子模块的 CFLAGS。
+        # tools/lib/{subcmd,bpf} 里的 pager.c 没先引入定义它的头。
+        # 注入一个定义文件并追加到这些子模块的 CFLAGS。
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path("packages/kernel/scripts/build-kernel.sh")
           s = p.read_text()
           marker = "# ---------- 2. Apply patches ----------"
-          inject = r'''# CI fix: define __u128 for host tools against newer kernel-headers
-cat > /tmp/armada-u128.h <<'EOF'
-typedef signed __int128 __s128;
-typedef unsigned __int128 __u128;
-EOF
-for mk in tools/lib/subcmd/Makefile tools/lib/bpf/Makefile tools/bpf/resolve_btfids/Makefile; do
-    [ -f "$mk" ] && printf '\nCFLAGS += -include /tmp/armada-u128.h\n' >> "$mk"
-done
-
-'''
+          inject = (
+              "# CI fix: define __u128 for host tools\n"
+              "printf 'typedef signed __int128 __s128;\\ntypedef unsigned __int128 __u128;\\n' > /tmp/armada-u128.h\n"
+              "for mk in tools/lib/subcmd/Makefile tools/lib/bpf/Makefile tools/bpf/resolve_btfids/Makefile; do\n"
+              "    [ -f \"$mk\" ] && printf '\\nCFLAGS += -include /tmp/armada-u128.h\\n' >> \"$mk\"\n"
+              "done\n"
+              "\n"
+          )
           if "CI fix: define __u128" not in s:
               assert marker in s, "marker not found"
               s = s.replace(marker, inject + marker, 1)
